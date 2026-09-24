@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Métronome Intérieur</title>
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Métronome">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.10/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  html, body { background: #0f172a; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// Icônes minimalistes (remplacent lucide-react, non chargeable ici)
+const Play = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20" /></svg>
+);
+const Pause = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" /><rect x="14" y="4" width="5" height="16" /></svg>
+);
+const Settings = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+);
+const Volume2 = ({ size = 20, className = "" }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+);
+
+
+// ============================================================================
+// CONSTANTES (hors du composant pour éviter les re-créations)
+// ============================================================================
+
+const SUBDIVISION_OPTIONS = {
+  quarter: { name: 'Noire', symbol: '♩', label: 'Noires' },
+  eighth: { name: 'Croche', symbol: '♪', label: 'Croches' },
+  sixteenth: { name: 'Double-croche', symbol: '♬', label: 'Doubles-croches' },
+  triplet: { name: 'Triolet de croche', symbol: '♪₃', label: 'Triolets' }
+};
+
+const AVAILABLE_SOUNDS = {
+  clave: { 
+    label: 'C', 
+    name: 'Clave', 
+    color: '#ef4444',
+    icon: '🔴',
+    freq: 2600,
+    type: 'sine'
+  },
+  woodblock: { 
+    label: 'W', 
+    name: 'Woodblock', 
+    color: '#f59e0b',
+    icon: '🟡',
+    freq: 1800,
+    type: 'square'
+  },
+  cowbell: { 
+    label: 'B', 
+    name: 'Cowbell', 
+    color: '#10b981',
+    icon: '🟢',
+    freq: 800,
+    type: 'triangle'
+  },
+  kick: { 
+    label: 'K', 
+    name: 'Kick', 
+    color: '#3b82f6',
+    icon: '🔵',
+    freq: 100,
+    type: 'sine'
+  },
+  bell: {
+    label: 'Bell',
+    name: 'Repère',
+    color: '#a855f7',
+    icon: '🔔',
+    freq: 3200,
+    type: 'sine'
+  }
+};
+
+const FREQUENCIES = {
+  every: { label: '●', name: 'Toutes', color: '#10b981' },
+  every_2: { label: '②', name: '/2 mesures', color: '#3b82f6' },
+  every_4: { label: '④', name: '/4 mesures', color: '#8b5cf6' },
+  never: { label: '○', name: 'Jamais', color: '#64748b' }
+};
+
+const FREQUENCY_ORDER = ['every', 'every_2', 'every_4', 'never'];
+
+const DEFAULT_VOLUMES = {
+  clave: 0.3,
+  woodblock: 0.25,
+  cowbell: 0.3,
+  kick: 0.5,
+  bell: 0.7
+};
+
+// ============================================================================
+// COMPOSANT PRINCIPAL
+// ============================================================================
+
+const MetronomeInterieur = () => {
+  // ==========================================================================
+  // STATES
+  // ==========================================================================
+  
+  const [tempo, setTempo] = useState(120);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentMeasure, setCurrentMeasure] = useState(1);
+  const [currentSubdivision, setCurrentSubdivision] = useState(0);
+  const [soundSelectorOpen, setSoundSelectorOpen] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Clic repère pour grilles d'accords
+  const [beaconInterval, setBeaconInterval] = useState('none');
+  const [bellType, setBellType] = useState('harmonic');
+  
+  // Signature rythmique
+  const [numerator, setNumerator] = useState(4);
+  const [denominator, setDenominator] = useState(4);
+  
+  // Subdivision affichée
+  const [subdivision, setSubdivision] = useState('eighth');
+  
+  // Volumes
+  const [soundVolumes, setSoundVolumes] = useState(DEFAULT_VOLUMES);
+  
+  // ==========================================================================
+  // REFS (pour le scheduler audio)
+  // ==========================================================================
+  
+  const audioContextRef = useRef(null);
+  const currentNoteRef = useRef(0);
+  const nextNoteTimeRef = useRef(0);
+  const currentMeasureRef = useRef(1);
+  const schedulerIntervalRef = useRef(null);
+  
+  // ==========================================================================
+  // CALCULS MEMOÏSÉS (éviter recalculs inutiles)
+  // ==========================================================================
+  
+  // Calculer le nombre total de subdivisions
+  const totalSubdivisions = useMemo(() => {
+    const quartersInMeasure = denominator === 2 ? numerator * 2 
+      : denominator === 4 ? numerator 
+      : numerator / 2;
+    
+    switch(subdivision) {
+      case 'quarter': return Math.round(quartersInMeasure);
+      case 'eighth': return Math.round(quartersInMeasure * 2);
+      case 'sixteenth': return Math.round(quartersInMeasure * 4);
+      case 'triplet': return Math.round(quartersInMeasure * 3);
+      default: return Math.round(quartersInMeasure * 2);
+    }
+  }, [numerator, denominator, subdivision]);
+  
+  // Calculer les subdivisions (structure de données)
+  const subdivisions = useMemo(() => {
+    const subs = [];
+    
+    // Helper: calculer unités à labelliser
+    const getUnitsToLabel = () => {
+      if (denominator === 4) return numerator;
+      if (denominator === 2) return numerator;
+      if (denominator === 8) {
+        return subdivision === 'quarter' ? Math.round(numerator / 2) : numerator;
+      }
+      return numerator;
+    };
+    
+    const unitsToLabel = getUnitsToLabel();
+    const subsPerUnit = totalSubdivisions / unitsToLabel;
+    
+    for (let i = 0; i < totalSubdivisions; i++) {
+      const unitNum = Math.floor(i / subsPerUnit) + 1;
+      const posInUnit = i % subsPerUnit;
+      
+      let label, defaultFreq, defaultSound;
+      
+      // Génération des labels selon subdivision
+      if (subdivision === 'quarter') {
+        label = String(unitNum);
+        defaultFreq = Math.floor(posInUnit) === 0 ? 'every' : 'never';
+        defaultSound = (unitNum - 1) % 2 === 0 ? 'clave' : 'woodblock';
+      } else if (subdivision === 'eighth') {
+        label = Math.floor(posInUnit) === 0 ? String(unitNum) : '∧';
+        defaultFreq = Math.floor(posInUnit) === 0 ? 'every' : 'never';
+        defaultSound = (unitNum - 1) % 2 === 0 ? 'clave' : 'woodblock';
+      } else if (subdivision === 'sixteenth') {
+        const relativePos = Math.floor((posInUnit / subsPerUnit) * 4);
+        const posLabels = [String(unitNum), 'e', '∧', 'a'];
+        label = posLabels[Math.min(relativePos, 3)];
+        defaultFreq = Math.floor(posInUnit) === 0 ? 'every' : 'never';
+        defaultSound = (unitNum - 1) % 2 === 0 ? 'clave' : 'woodblock';
+      } else {
+        const relativePos = Math.floor((posInUnit / subsPerUnit) * 3);
+        label = String(Math.min(relativePos + 1, 3));
+        defaultFreq = Math.floor(posInUnit) === 0 ? 'every' : 'never';
+        defaultSound = (unitNum - 1) % 2 === 0 ? 'clave' : 'woodblock';
+      }
+      
+      subs.push({ position: i, frequency: defaultFreq, label, sound: defaultSound });
+    }
+    
+    return subs;
+  }, [numerator, denominator, subdivision, totalSubdivisions]);
+  
+  // State pour les subdivisions (peut être modifié par l'utilisateur)
+  const [currentSubdivisions, setCurrentSubdivisions] = useState(subdivisions);
+  
+  // Mettre à jour quand la configuration change
+  useEffect(() => {
+    setCurrentSubdivisions(subdivisions);
+  }, [subdivisions]);
+  
+  // ==========================================================================
+  // INITIALISATION AUDIO
+  // ==========================================================================
+  
+  useEffect(() => {
+    // Créer contexte audio au premier rendu
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    // Cleanup au démontage
+    return () => {
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
+    };
+  }, []);
+  
+  // ==========================================================================
+  // FONCTIONS AUDIO (useCallback pour stabilité)
+  // ==========================================================================
+  
+  const playSound = useCallback((time, soundType, isStrong) => {
+    const ctx = audioContextRef.current;
+    if (!ctx) return;
+    
+    const soundConfig = AVAILABLE_SOUNDS[soundType];
+    if (!soundConfig) return;
+    
+    const baseVolume = soundVolumes[soundType] || 0.3;
+    const volumeMultiplier = isStrong ? 1.15 : 1.0;
+    const finalVolume = baseVolume * volumeMultiplier;
+    
+    // === KICK ===
+    if (soundType === 'kick') {
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      oscillator.frequency.setValueAtTime(soundConfig.freq, time);
+      oscillator.frequency.exponentialRampToValueAtTime(40, time + 0.1);
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(finalVolume, time);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, time + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      oscillator.start(time);
+      oscillator.stop(time + 0.3);
+      return;
+    }
+    
+    // === COWBELL ===
+    if (soundType === 'cowbell') {
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc1.frequency.value = 800;
+      osc2.frequency.value = 540;
+      osc1.type = 'square';
+      osc2.type = 'square';
+      
+      gain.gain.setValueAtTime(finalVolume, time);
+      gain.gain.exponentialRampToValueAtTime(0.01, time + 0.15);
+      
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc1.start(time);
+      osc2.start(time);
+      osc1.stop(time + 0.15);
+      osc2.stop(time + 0.15);
+      return;
+    }
+    
+    // === BELL (3 types) ===
+    if (soundType === 'bell') {
+      if (bellType === 'harmonic') {
+        // Bell 1: Cloche harmonique
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const osc3 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc1.frequency.value = 3200;
+        osc2.frequency.value = 4800;
+        osc3.frequency.value = 6400;
+        osc1.type = osc2.type = osc3.type = 'sine';
+        
+        gain.gain.setValueAtTime(finalVolume * 1.2, time);
+        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
+        
+        osc1.connect(gain);
+        osc2.connect(gain);
+        osc3.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc1.start(time);
+        osc2.start(time);
+        osc3.start(time);
+        osc1.stop(time + 0.1);
+        osc2.stop(time + 0.1);
+        osc3.stop(time + 0.1);
+        return;
+      } else if (bellType === 'click') {
+        // Bell 2: Click percussif
+        const bufferSize = ctx.sampleRate * 0.05;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.value = 2000;
+        
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(finalVolume * 1.5, time);
+        gain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
+        
+        source.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        
+        source.start(time);
+        source.stop(time + 0.05);
+        return;
+      } else if (bellType === 'block') {
+        // Bell 3: Temple block
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        const gain2 = ctx.createGain();
+        const mainGain = ctx.createGain();
+        
+        osc1.frequency.value = 200;
+        osc1.type = 'square';
+        gain1.gain.setValueAtTime(finalVolume * 0.8, time);
+        gain1.gain.exponentialRampToValueAtTime(0.01, time + 0.08);
+        
+        osc2.frequency.value = 3500;
+        osc2.type = 'sine';
+        gain2.gain.setValueAtTime(finalVolume * 1.2, time);
+        gain2.gain.exponentialRampToValueAtTime(0.01, time + 0.08);
+        
+        osc1.connect(gain1);
+        osc2.connect(gain2);
+        gain1.connect(mainGain);
+        gain2.connect(mainGain);
+        mainGain.connect(ctx.destination);
+        
+        osc1.start(time);
+        osc2.start(time);
+        osc1.stop(time + 0.08);
+        osc2.stop(time + 0.08);
+        return;
+      }
+    }
+    
+    // === CLAVE / WOODBLOCK (par défaut) ===
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    
+    const freqMultiplier = isStrong ? 1.15 : 1.0;
+    oscillator.frequency.value = soundConfig.freq * freqMultiplier;
+    oscillator.type = soundConfig.type;
+    
+    const duration = soundType === 'clave' ? 0.05 : 0.08;
+    
+    gainNode.gain.setValueAtTime(finalVolume, time);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, time + duration);
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    
+    oscillator.start(time);
+    oscillator.stop(time + duration);
+  }, [soundVolumes, bellType]);
+  
+  const previewSound = useCallback((soundType) => {
+    const ctx = audioContextRef.current;
+    if (!ctx) return;
+    playSound(ctx.currentTime, soundType, false);
+  }, [playSound]);
+  
+  // ==========================================================================
+  // FONCTIONS DE CONTRÔLE (useCallback)
+  // ==========================================================================
+  
+  const shouldPlayNote = useCallback((subdivisionIndex, measureNumber) => {
+    const freq = currentSubdivisions[subdivisionIndex]?.frequency;
+    if (!freq) return false;
+    
+    switch(freq) {
+      case 'every': return true;
+      case 'every_2': return (measureNumber % 2) === 1;
+      case 'every_4': return ((measureNumber - 1) % 4) === 0;
+      case 'never': return false;
+      default: return false;
+    }
+  }, [currentSubdivisions]);
+  
+  const toggleFrequency = useCallback((index) => {
+    setCurrentSubdivisions(prev => {
+      const newSubs = [...prev];
+      const currentFreq = newSubs[index].frequency;
+      const currentIndex = FREQUENCY_ORDER.indexOf(currentFreq);
+      const nextIndex = (currentIndex + 1) % FREQUENCY_ORDER.length;
+      newSubs[index].frequency = FREQUENCY_ORDER[nextIndex];
+      return newSubs;
+    });
+  }, []);
+  
+  const changeSound = useCallback((index, newSound) => {
+    setCurrentSubdivisions(prev => {
+      const newSubs = [...prev];
+      newSubs[index].sound = newSound;
+      return newSubs;
+    });
+    setSoundSelectorOpen(null);
+  }, []);
+  
+  const openSoundSelector = useCallback((index) => {
+    setSoundSelectorOpen(index);
+  }, []);
+  
+  const changeSoundVolume = useCallback((soundType, volume) => {
+    setSoundVolumes(prev => ({ ...prev, [soundType]: volume }));
+  }, []);
+  
+  const resetVolumes = useCallback(() => {
+    setSoundVolumes(DEFAULT_VOLUMES);
+  }, []);
+  
+  // ==========================================================================
+  // SCHEDULER AUDIO (Coeur du métronome)
+  // ==========================================================================
+  
+  const scheduler = useCallback(() => {
+    const ctx = audioContextRef.current;
+    if (!ctx) return;
+    
+    const secondsPerBeat = 60.0 / tempo;
+    
+    let secondsPerSubdivision;
+    switch(subdivision) {
+      case 'quarter': secondsPerSubdivision = secondsPerBeat; break;
+      case 'eighth': secondsPerSubdivision = secondsPerBeat / 2; break;
+      case 'sixteenth': secondsPerSubdivision = secondsPerBeat / 4; break;
+      case 'triplet': secondsPerSubdivision = secondsPerBeat / 3; break;
+      default: secondsPerSubdivision = secondsPerBeat / 2;
+    }
+    
+    const scheduleAheadTime = 0.1;
+    
+    while (nextNoteTimeRef.current < ctx.currentTime + scheduleAheadTime) {
+      const noteIndex = currentNoteRef.current % totalSubdivisions;
+      const measureNum = currentMeasureRef.current;
+      
+      // Jouer le pattern normal
+      if (shouldPlayNote(noteIndex, measureNum)) {
+        const soundType = currentSubdivisions[noteIndex].sound;
+        
+        // Calculer unités pour temps forts
+        const getUnitsToLabel = () => {
+          if (denominator === 4) return numerator;
+          if (denominator === 2) return numerator;
+          if (denominator === 8) {
+            return subdivision === 'quarter' ? Math.round(numerator / 2) : numerator;
+          }
+          return numerator;
+        };
+        
+        const unitsToLabel = getUnitsToLabel();
+        const subsPerUnit = totalSubdivisions / unitsToLabel;
+        const posInUnit = noteIndex % subsPerUnit;
+        const isStrong = Math.floor(posInUnit) === 0;
+        
+        playSound(nextNoteTimeRef.current, soundType, isStrong);
+      }
+      
+      // Jouer le clic repère si activé
+      if (beaconInterval !== 'none' && noteIndex === 0) {
+        const interval = parseInt(beaconInterval);
+        if ((measureNum - 1) % interval === 0) {
+          playSound(nextNoteTimeRef.current, 'bell', true);
+        }
+      }
+      
+      // Mise à jour affichage
+      setCurrentSubdivision(noteIndex);
+      setCurrentMeasure(measureNum);
+      
+      // Avancer
+      nextNoteTimeRef.current += secondsPerSubdivision;
+      currentNoteRef.current++;
+      
+      // Nouvelle mesure
+      if (currentNoteRef.current % totalSubdivisions === 0) {
+        currentMeasureRef.current++;
+        const maxMeasures = beaconInterval !== 'none' ? parseInt(beaconInterval) : 4;
+        if (currentMeasureRef.current > maxMeasures) {
+          currentMeasureRef.current = 1;
+        }
+      }
+    }
+  }, [tempo, subdivision, totalSubdivisions, shouldPlayNote, playSound, 
+      beaconInterval, currentSubdivisions, numerator, denominator]);
+  
+  // ==========================================================================
+  // GESTION PLAY/PAUSE
+  // ==========================================================================
+  
+  useEffect(() => {
+    if (isPlaying) {
+      const ctx = audioContextRef.current;
+      if (!ctx) return;
+      
+      currentNoteRef.current = 0;
+      currentMeasureRef.current = 1;
+      nextNoteTimeRef.current = ctx.currentTime;
+      
+      schedulerIntervalRef.current = setInterval(scheduler, 25);
+    } else {
+      if (schedulerIntervalRef.current) {
+        clearInterval(schedulerIntervalRef.current);
+      }
+      setCurrentSubdivision(-1);
+    }
+    
+    // Cleanup à l'arrêt
+    return () => {
+      if (schedulerIntervalRef.current) {
+        clearInterval(schedulerIntervalRef.current);
+      }
+    };
+  }, [isPlaying, scheduler]);
+  
+  // ==========================================================================
+  // PRESETS
+  // ==========================================================================
+  
+  const applyPreset = useCallback((presetType) => {
+    setCurrentSubdivisions(prev => {
+      const newSubs = [...prev];
+      
+      switch(presetType) {
+        case 'all':
+          newSubs.forEach(sub => sub.frequency = 'every');
+          break;
+        case 'none':
+          newSubs.forEach(sub => sub.frequency = 'never');
+          break;
+        case 'downbeats':
+          newSubs.forEach((sub, i) => {
+            const subsPerBeat = totalSubdivisions / numerator;
+            sub.frequency = (i % subsPerBeat === 0) ? 'every' : 'never';
+          });
+          break;
+        case 'backbeat':
+          if (subdivision === 'eighth' && numerator === 4) {
+            newSubs.forEach((sub, i) => sub.frequency = (i === 2 || i === 6) ? 'every' : 'never');
+          }
+          break;
+        case '2and4':
+          if (subdivision === 'eighth' && numerator === 4) {
+            newSubs.forEach((sub, i) => sub.frequency = (i === 2 || i === 6) ? 'every' : 'never');
+          }
+          break;
+        default:
+          break;
+      }
+      
+      return newSubs;
+    });
+  }, [totalSubdivisions, numerator, subdivision]);
+  
+  // ==========================================================================
+  // PRÉVISUALISATION
+  // ==========================================================================
+  
+  const previewMeasures = useMemo(() => {
+    const measures = [];
+    for (let m = 1; m <= 4; m++) {
+      let notes = '';
+      currentSubdivisions.forEach((sub, i) => {
+        const willPlay = shouldPlayNote(i, m);
+        notes += willPlay ? '♪ ' : '_ ';
+      });
+      measures.push({ measure: m, notes: notes.trim() });
+    }
+    return measures;
+  }, [currentSubdivisions, shouldPlayNote]);
+  
+  // ==========================================================================
+  // RENDER
+  // ==========================================================================
+  
+  return (
+    <div className="min-h-screen bg-slate-900 p-4 md:p-8">
+      <div className="max-w-6xl mx-auto">
+        {/* En-tête */}
+        <div className="text-center mb-8">
+          <h1 className="text-4xl font-bold text-white mb-2">🎵 Métronome Intérieur</h1>
+          <p className="text-slate-400">Développez votre rythme intérieur avec précision</p>
+        </div>
+        
+        {/* Panneau de contrôle */}
+        <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700 space-y-6">
+          {/* Tempo et Signature sur la même ligne */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Tempo */}
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">
+                Tempo (BPM)
+              </label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="30"
+                  max="300"
+                  value={tempo}
+                  onChange={(e) => setTempo(parseInt(e.target.value))}
+                  className="flex-1"
+                />
+                <span className="text-white font-mono text-xl w-16 text-right">{tempo}</span>
+              </div>
+            </div>
+            
+            {/* Signature Rythmique */}
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Signature Rythmique</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={numerator}
+                  onChange={(e) => setNumerator(parseInt(e.target.value))}
+                  disabled={isPlaying}
+                  className="bg-slate-700 text-white px-4 py-2 rounded-lg font-mono text-xl border-2 border-slate-600 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                
+                <span className="text-white text-2xl font-bold">/</span>
+                
+                <select
+                  value={denominator}
+                  onChange={(e) => setDenominator(parseInt(e.target.value))}
+                  disabled={isPlaying}
+                  className="bg-slate-700 text-white px-4 py-2 rounded-lg font-mono text-xl border-2 border-slate-600 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value={2}>2 (𝅗𝅥 Blanche)</option>
+                  <option value={4}>4 (♩ Noire)</option>
+                  <option value={8}>8 (♪ Croche)</option>
+                </select>
+              </div>
+              
+              <div className="mt-2 text-slate-400 text-sm">
+                → <strong className="text-blue-400">{numerator}/{denominator}</strong> = {numerator} x {
+                  denominator === 2 ? 'blanches' : denominator === 4 ? 'noires' : 'croches'
+                } par mesure
+              </div>
+            </div>
+          </div>
+          
+          {/* Subdivision */}
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Subdivision Affichée</label>
+            <select
+              value={subdivision}
+              onChange={(e) => setSubdivision(e.target.value)}
+              disabled={isPlaying}
+              className="w-full bg-slate-700 text-white px-4 py-2 rounded-lg font-mono text-lg border-2 border-slate-600 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="quarter">{SUBDIVISION_OPTIONS.quarter.symbol} {SUBDIVISION_OPTIONS.quarter.name}</option>
+              <option value="eighth">{SUBDIVISION_OPTIONS.eighth.symbol} {SUBDIVISION_OPTIONS.eighth.name}</option>
+              <option value="sixteenth">{SUBDIVISION_OPTIONS.sixteenth.symbol} {SUBDIVISION_OPTIONS.sixteenth.name}</option>
+              <option value="triplet">{SUBDIVISION_OPTIONS.triplet.symbol} {SUBDIVISION_OPTIONS.triplet.name}</option>
+            </select>
+            <div className="mt-2 text-slate-400 text-sm">
+              → <strong className="text-green-400">{totalSubdivisions} {SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} affichées</strong>
+            </div>
+          </div>
+          
+          {/* Clic Repère */}
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Clic Repère (Grilles d'Accords) 🔔</label>
+            <select
+              value={beaconInterval}
+              onChange={(e) => setBeaconInterval(e.target.value)}
+              disabled={isPlaying}
+              className="w-full bg-slate-700 text-white px-4 py-2 rounded-lg font-mono text-lg border-2 border-slate-600 focus:border-blue-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="none">Désactivé</option>
+              <option value="8">Toutes les 8 mesures (2×4)</option>
+              <option value="12">Toutes les 12 mesures (3×4)</option>
+              <option value="16">Toutes les 16 mesures (4×4)</option>
+              <option value="20">Toutes les 20 mesures (5×4)</option>
+              <option value="24">Toutes les 24 mesures (6×4)</option>
+            </select>
+            {beaconInterval !== 'none' && (
+              <div className="mt-2 text-slate-400 text-sm">
+                → <strong className="text-purple-400">Clic repère 🔔 sur mesures 1, {parseInt(beaconInterval) + 1}, {parseInt(beaconInterval) * 2 + 1}...</strong>
+              </div>
+            )}
+          </div>
+          
+          {/* Bouton Play/Pause */}
+          <div className="flex gap-3">
+            <button
+              onClick={() => setIsPlaying(!isPlaying)}
+              className={`w-full py-3 px-6 rounded-lg font-semibold flex items-center justify-center gap-2 transition-all ${
+                isPlaying 
+                  ? 'bg-orange-600 hover:bg-orange-700 text-white' 
+                  : 'bg-green-600 hover:bg-green-700 text-white'
+              }`}
+            >
+              {isPlaying ? (
+                <>
+                  <Pause size={20} /> PAUSE
+                </>
+              ) : (
+                <>
+                  <Play size={20} /> PLAY
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+        
+        {/* Grille Interactive */}
+        <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700">
+          <h2 className="text-white text-lg font-semibold mb-4">
+            Grille Interactive - {numerator}/{denominator} en {SUBDIVISION_OPTIONS[subdivision].label}
+          </h2>
+          
+          <div className="mb-4">
+            <div className="text-slate-400 text-sm mb-3">
+              <strong>Fréquence:</strong> Cliquez sur la note pour cycler {FREQUENCY_ORDER.map(f => FREQUENCIES[f].label).join(' → ')}
+            </div>
+            <div className="text-slate-400 text-sm">
+              <strong>Son:</strong> Cliquez sur le bouton coloré en bas
+            </div>
+          </div>
+          
+          {/* Affichage de la grille */}
+          {(() => {
+            const itemsPerRow = Math.min(12, totalSubdivisions);
+            const rows = [];
+            for (let i = 0; i < totalSubdivisions; i += itemsPerRow) {
+              rows.push(currentSubdivisions.slice(i, i + itemsPerRow));
+            }
+            
+            const getSize = (count) => {
+              if (count <= 8) return 'normal';
+              if (count <= 10) return 'medium';
+              return 'compact';
+            };
+            
+            const size = getSize(itemsPerRow);
+            const useFixedWidth = rows.length > 1;
+            const blockWidthPercent = 100 / 12;
+            
+            const getUnitsToLabel = () => {
+              if (denominator === 4) return numerator;
+              if (denominator === 2) return numerator;
+              if (denominator === 8) {
+                return subdivision === 'quarter' ? Math.round(numerator / 2) : numerator;
+              }
+              return numerator;
+            };
+            
+            const unitsToLabel = getUnitsToLabel();
+            const subsPerUnit = totalSubdivisions / unitsToLabel;
+            
+            return rows.map((rowSubs, rowIndex) => (
+              <div key={rowIndex} className="mb-6">
+                {/* Labels T1, T2, etc. */}
+                <div className="flex mb-2 px-1">
+                  {rowSubs.map((sub, idx) => {
+                    const globalIdx = rowIndex * itemsPerRow + idx;
+                    const unitNum = Math.floor(globalIdx / subsPerUnit) + 1;
+                    const posInUnit = globalIdx % subsPerUnit;
+                    
+                    if (Math.floor(posInUnit) === 0 && unitNum <= unitsToLabel) {
+                      const remainingInRow = rowSubs.length - idx;
+                      const unitWidth = Math.min(Math.ceil(subsPerUnit), remainingInRow);
+                      
+                      return (
+                        <div 
+                          key={idx}
+                          className="text-slate-300 font-semibold text-center"
+                          style={{ 
+                            width: useFixedWidth 
+                              ? `${blockWidthPercent * unitWidth}%` 
+                              : `${(100 / rowSubs.length) * unitWidth}%`,
+                            fontSize: size === 'compact' ? '0.7rem' : '0.75rem'
+                          }}
+                        >
+                          T{unitNum}
+                        </div>
+                      );
+                    }
+                    return null;
+                  }).filter(Boolean)}
+                </div>
+                
+                {/* Grille de subdivisions */}
+                <div className="flex gap-2">
+                  {rowSubs.map((sub, localIdx) => {
+                    const idx = rowIndex * itemsPerRow + localIdx;
+                    const freq = FREQUENCIES[sub.frequency];
+                    const sound = AVAILABLE_SOUNDS[sub.sound];
+                    const isActive = isPlaying && currentSubdivision === idx;
+                    const shouldPlay = shouldPlayNote(idx, currentMeasure);
+                    const isGhost = isPlaying && !shouldPlay && currentSubdivision === idx;
+                    
+                    const showSeparator = subdivision === 'triplet' && (idx + 1) % 3 === 0 && localIdx < rowSubs.length - 1;
+                    
+                    return (
+                      <React.Fragment key={idx}>
+                        <div
+                          className="relative"
+                          style={{
+                            ...(useFixedWidth 
+                              ? { width: `calc(${blockWidthPercent}% - 0.5rem)` }
+                              : { flex: 1 }
+                            ),
+                            opacity: isPlaying ? (isActive ? 1 : 0.6) : 1
+                          }}
+                        >
+                          {/* Note visuelle */}
+                          <div
+                            onClick={() => toggleFrequency(idx)}
+                            className="rounded-t-lg text-center cursor-pointer hover:scale-105 transition-all"
+                            style={{
+                              backgroundColor: isGhost ? '#374151' : freq.color + '33',
+                              borderTop: `2px solid ${isActive && shouldPlay ? '#fbbf24' : freq.color}`,
+                              borderLeft: `2px solid ${isActive && shouldPlay ? '#fbbf24' : freq.color}`,
+                              borderRight: `2px solid ${isActive && shouldPlay ? '#fbbf24' : freq.color}`,
+                              borderBottom: 'none',
+                              padding: size === 'compact' ? '0.4rem' : size === 'medium' ? '0.5rem' : '0.75rem'
+                            }}
+                          >
+                            <div 
+                              className="text-white font-bold mb-1" 
+                              style={{ fontSize: size === 'compact' ? '0.9rem' : size === 'medium' ? '1rem' : '1.25rem' }}
+                            >
+                              {sub.label}
+                            </div>
+                            <div 
+                              className="text-slate-300"
+                              style={{ fontSize: size === 'compact' ? '0.6rem' : '0.65rem' }}
+                            >
+                              #{idx + 1}
+                            </div>
+                            <div 
+                              className="mb-1"
+                              style={{ 
+                                color: isGhost ? '#6b7280' : freq.color,
+                                opacity: isGhost ? 0.5 : 1,
+                                fontSize: size === 'compact' ? '1.1rem' : size === 'medium' ? '1.3rem' : '1.5rem'
+                              }}
+                            >
+                              {freq.label}
+                            </div>
+                            <div 
+                              className="font-medium"
+                              style={{ 
+                                color: isGhost ? '#6b7280' : freq.color,
+                                opacity: isGhost ? 0.5 : 1,
+                                fontSize: size === 'compact' ? '0.6rem' : '0.65rem'
+                              }}
+                            >
+                              {freq.name}
+                            </div>
+                          </div>
+                          
+                          {/* Bouton son */}
+                          <button
+                            onClick={() => openSoundSelector(idx)}
+                            className="w-full rounded-b-lg font-bold transition-all hover:scale-105 active:scale-95"
+                            style={{
+                              backgroundColor: sub.frequency === 'never' ? '#64748b' : sound.color,
+                              color: 'white',
+                              borderTop: 'none',
+                              borderLeft: `2px solid ${isActive && shouldPlay ? '#fbbf24' : (sub.frequency === 'never' ? '#64748b' : sound.color)}`,
+                              borderRight: `2px solid ${isActive && shouldPlay ? '#fbbf24' : (sub.frequency === 'never' ? '#64748b' : sound.color)}`,
+                              borderBottom: `2px solid ${isActive && shouldPlay ? '#fbbf24' : (sub.frequency === 'never' ? '#64748b' : sound.color)}`,
+                              padding: size === 'compact' ? '0.3rem' : '0.5rem',
+                              fontSize: size === 'compact' ? '0.65rem' : '0.75rem',
+                              opacity: sub.frequency === 'never' ? 0.5 : 1
+                            }}
+                          >
+                            <div style={{ fontSize: size === 'compact' ? '0.9rem' : '1rem' }}>
+                              {sub.frequency === 'never' ? '🔇' : sound.icon}
+                            </div>
+                            <div>{sub.frequency === 'never' ? '—' : sound.label}</div>
+                          </button>
+                        </div>
+                        
+                        {showSeparator && (
+                          <div className="flex items-center">
+                            <div className="w-0.5 bg-slate-600 h-full"></div>
+                          </div>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+                
+                {rows.length > 1 && (
+                  <div className="text-center text-slate-500 text-xs mt-1">
+                    Ligne {rowIndex + 1}/{rows.length} 
+                    {rowIndex === 0 && ` (${SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} 1-${Math.min(itemsPerRow, totalSubdivisions)})`}
+                    {rowIndex === 1 && ` (${SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} ${itemsPerRow + 1}-${Math.min(itemsPerRow * 2, totalSubdivisions)})`}
+                    {rowIndex === 2 && ` (${SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} ${itemsPerRow * 2 + 1}-${totalSubdivisions})`}
+                  </div>
+                )}
+              </div>
+            ));
+          })()}
+        </div>
+        
+        {/* Sélecteur de son (Modal) */}
+        {soundSelectorOpen !== null && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+            onClick={() => setSoundSelectorOpen(null)}
+          >
+            <div 
+              className="bg-slate-800 rounded-2xl p-6 max-w-sm w-full border-2 border-slate-600"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-white text-xl font-bold mb-2">
+                Choisir le son
+              </h3>
+              <p className="text-slate-400 text-sm mb-4">
+                Note #{soundSelectorOpen + 1} - {currentSubdivisions[soundSelectorOpen].label}
+              </p>
+              
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {Object.entries(AVAILABLE_SOUNDS)
+                  .filter(([key]) => key !== 'bell')
+                  .map(([key, sound]) => (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      changeSound(soundSelectorOpen, key);
+                      previewSound(key);
+                    }}
+                    className={`p-4 rounded-xl font-bold text-white transition-all active:scale-95 ${
+                      currentSubdivisions[soundSelectorOpen].sound === key 
+                        ? 'ring-4 ring-yellow-400 scale-105' 
+                        : 'hover:scale-105'
+                    }`}
+                    style={{
+                      backgroundColor: sound.color
+                    }}
+                  >
+                    <div className="text-3xl mb-2">{sound.icon}</div>
+                    <div className="text-sm">{sound.name}</div>
+                    <div className="text-xs opacity-75 mt-1">({sound.label})</div>
+                  </button>
+                ))}
+              </div>
+              
+              <button
+                onClick={() => setSoundSelectorOpen(null)}
+                className="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-semibold transition-all"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {/* Prévisualisation 4 mesures */}
+        <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700">
+          <h2 className="text-white text-lg font-semibold mb-4">
+            Aperçu sur 4 mesures
+            {isPlaying && <span className="text-green-400 ml-3">→ Mesure {currentMeasure}</span>}
+          </h2>
+          
+          <div className="space-y-2 font-mono">
+            {previewMeasures.map(({ measure, notes }) => (
+              <div 
+                key={measure}
+                className={`p-3 rounded ${
+                  isPlaying && currentMeasure === measure 
+                    ? 'bg-slate-700 border-l-4 border-green-400' 
+                    : 'bg-slate-900'
+                }`}
+              >
+                <span className={`${
+                  isPlaying && currentMeasure === measure 
+                    ? 'text-green-400 font-bold' 
+                    : 'text-slate-400'
+                }`}>
+                  Mes.{measure}:
+                </span>
+                <span className="text-white ml-4 text-lg">{notes}</span>
+              </div>
+            ))}
+          </div>
+          
+          <div className="mt-4 text-slate-400 text-sm">
+            ♪ = Note jouée | _ = Silence (ghost note)
+          </div>
+        </div>
+        
+        {/* Presets rapides */}
+        <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 mb-6">
+          <h2 className="text-white text-lg font-semibold mb-4">Actions Rapides</h2>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <button
+              onClick={() => applyPreset('all')}
+              disabled={isPlaying}
+              className="py-2 px-4 bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white rounded-lg text-sm transition-all"
+            >
+              Tout activer
+            </button>
+            <button
+              onClick={() => applyPreset('none')}
+              disabled={isPlaying}
+              className="py-2 px-4 bg-gray-600 hover:bg-gray-700 disabled:bg-slate-600 text-white rounded-lg text-sm transition-all"
+            >
+              Tout désactiver
+            </button>
+            <button
+              onClick={() => applyPreset('downbeats')}
+              disabled={isPlaying}
+              className="py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white rounded-lg text-sm transition-all"
+            >
+              Temps forts
+            </button>
+            <button
+              onClick={() => applyPreset('backbeat')}
+              disabled={isPlaying || subdivision !== 'eighth' || numerator !== 4}
+              className="py-2 px-4 bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 text-white rounded-lg text-sm transition-all"
+            >
+              Backbeat 2-4
+            </button>
+            <button
+              onClick={() => applyPreset('2and4')}
+              disabled={isPlaying || subdivision !== 'eighth' || numerator !== 4}
+              className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-600 text-white rounded-lg text-sm transition-all"
+            >
+              Contre-temps
+            </button>
+          </div>
+        </div>
+        
+        {/* Légende */}
+        <div className="flex flex-wrap gap-4 mt-4 p-3 bg-slate-900 rounded-lg mb-6">
+          <div className="text-slate-300 font-semibold">Fréquences:</div>
+          {Object.entries(FREQUENCIES).map(([key, value]) => (
+            <div key={key} className="flex items-center gap-2">
+              <span className="text-2xl" style={{ color: value.color }}>{value.label}</span>
+              <span className="text-slate-300 text-sm">{value.name}</span>
+            </div>
+          ))}
+        </div>
+        
+        <div className="flex flex-wrap gap-4 p-3 bg-slate-900 rounded-lg mb-6">
+          <div className="text-slate-300 font-semibold">Sons:</div>
+          {Object.entries(AVAILABLE_SOUNDS).map(([key, value]) => (
+            <div key={key} className="flex items-center gap-2">
+              <span className="text-2xl">{value.icon}</span>
+              <span className="text-slate-300 text-sm">{value.name}</span>
+            </div>
+          ))}
+        </div>
+        
+        {/* Réglages Avancés */}
+        <div className="bg-slate-800 rounded-lg border border-slate-700 mb-6 overflow-hidden">
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="w-full p-4 flex items-center justify-between text-white hover:bg-slate-700 transition-all"
+          >
+            <div className="flex items-center gap-3">
+              <Settings size={20} />
+              <h2 className="text-lg font-semibold">Réglages Avancés - Volume des Sons</h2>
+            </div>
+            <div className="text-slate-400">
+              {showSettings ? '▲' : '▼'}
+            </div>
+          </button>
+          
+          {showSettings && (
+            <div className="p-6 pt-2 border-t border-slate-700">
+              <p className="text-slate-400 text-sm mb-4">
+                Ajustez le volume de chaque son pour un équilibrage parfait
+              </p>
+              
+              {/* Volumes des sons */}
+              <div className="space-y-4 mb-4">
+                {Object.entries(AVAILABLE_SOUNDS).map(([key, sound]) => (
+                  <div key={key} className="bg-slate-900 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">{sound.icon}</span>
+                        <span className="text-white font-semibold">{sound.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-400 text-sm font-mono">
+                          {Math.round(soundVolumes[key] * 100)}%
+                        </span>
+                        <button
+                          onClick={() => previewSound(key)}
+                          className="p-2 rounded-lg transition-all hover:scale-110 active:scale-95"
+                          style={{ backgroundColor: sound.color }}
+                          title="Prévisualiser"
+                        >
+                          <Volume2 size={16} className="text-white" />
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={soundVolumes[key] * 100}
+                      onChange={(e) => changeSoundVolume(key, parseInt(e.target.value) / 100)}
+                      className="w-full h-2 rounded-lg appearance-none cursor-pointer"
+                      style={{
+                        background: `linear-gradient(to right, ${sound.color} 0%, ${sound.color} ${soundVolumes[key] * 100}%, #475569 ${soundVolumes[key] * 100}%, #475569 100%)`
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+              
+              {/* Sélecteur type de Bell */}
+              <div className="mb-4 p-4 bg-slate-950 rounded-lg border border-slate-700">
+                <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                  🔔 Type de Clic Repère
+                </h3>
+                <p className="text-slate-400 text-xs mb-3">
+                  Choisissez le son du clic repère pour les grilles d'accords
+                </p>
+                
+                <div className="space-y-2">
+                  {[
+                    { value: 'harmonic', name: 'Bell 1 - Cloche Harmonique', desc: 'Son clair avec harmoniques multiples - "TING!"' },
+                    { value: 'click', name: 'Bell 2 - Click Percussif', desc: 'Bruit blanc filtré ultra-court - "CLACK!"' },
+                    { value: 'block', name: 'Bell 3 - Temple Block', desc: 'Double frappe grave + aigu - "TOCK!"' }
+                  ].map(bell => (
+                    <label key={bell.value} className="flex items-center gap-3 p-3 bg-slate-900 rounded-lg cursor-pointer hover:bg-slate-800 transition-all">
+                      <input
+                        type="radio"
+                        name="bellType"
+                        value={bell.value}
+                        checked={bellType === bell.value}
+                        onChange={(e) => setBellType(e.target.value)}
+                        className="w-4 h-4"
+                      />
+                      <div className="flex-1">
+                        <div className="text-white font-semibold">{bell.name}</div>
+                        <div className="text-slate-400 text-xs">{bell.desc}</div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const prevBellType = bellType;
+                          setBellType(bell.value);
+                          setTimeout(() => previewSound('bell'), 50);
+                          setTimeout(() => setBellType(prevBellType), 100);
+                        }}
+                        className="p-2 rounded-lg bg-purple-600 hover:bg-purple-700 transition-all"
+                        title="Tester"
+                      >
+                        <Volume2 size={16} className="text-white" />
+                      </button>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={resetVolumes}
+                  className="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-semibold transition-all"
+                >
+                  Réinitialiser les volumes
+                </button>
+              </div>
+              
+              <div className="mt-4 p-3 bg-slate-950 rounded-lg border border-slate-700">
+                <p className="text-slate-400 text-xs">
+                  💡 <strong>Astuce:</strong> Utilisez le bouton <Volume2 size={12} className="inline" /> pour tester chaque son individuellement et trouver l'équilibre parfait entre tous les sons.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Instructions */}
+        <div className="mt-6 p-4 bg-slate-700 rounded-lg border border-slate-600">
+          <h3 className="text-white font-semibold mb-2">💡 Mode d'emploi</h3>
+          <ul className="text-slate-300 text-sm space-y-1">
+            <li>• <strong>Cliquez sur la partie haute</strong> d'une note pour changer sa fréquence d'apparition</li>
+            <li>• <strong>Cliquez sur le bouton coloré</strong> en bas pour choisir le son de cette note</li>
+            <li>• Les <strong className="text-yellow-400">notes actives</strong> s'illuminent en jaune pendant la lecture</li>
+            <li>• Les <strong className="text-slate-400">ghost notes</strong> (grisées) sont les notes que vous devez sentir intérieurement</li>
+            <li>• Utilisez les presets pour démarrer rapidement</li>
+            <li>• <strong>4 sons disponibles:</strong> 🔴 Clave (aigu), 🟡 Woodblock (sec), 🟢 Cowbell (métallique), 🔵 Kick (grave)</li>
+            <li>• <strong>Clic repère 🔔 :</strong> Son spécial pour marquer les grilles d'accords (toutes les 8, 12, 16, 20 ou 24 mesures)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<MetronomeInterieur />);
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {
+        // Installation possible sans SW (juste sans fonctionnement hors-ligne)
+      });
+    });
+  }
+</script>
+</body>
+</html>
