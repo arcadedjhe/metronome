@@ -814,30 +814,6 @@ const MetronomeInterieur = () => {
           
           {/* Affichage de la grille */}
           {(() => {
-            // Taille minimale d'un pas pour rester lisible sur petit écran (px)
-            const MIN_STEP_WIDTH = 56;
-            const GRID_GAP = 8; // correspond à gap-2 (0.5rem)
-            
-            const maxByWidth = gridWidth > 0
-              ? Math.max(1, Math.floor((gridWidth + GRID_GAP) / (MIN_STEP_WIDTH + GRID_GAP)))
-              : 12; // avant la première mesure (premier rendu), on garde l'ancien plafond
-            
-            const itemsPerRow = Math.min(maxByWidth, totalSubdivisions);
-            const rows = [];
-            for (let i = 0; i < totalSubdivisions; i += itemsPerRow) {
-              rows.push(currentSubdivisions.slice(i, i + itemsPerRow));
-            }
-            
-            const getSize = (count) => {
-              if (count <= 8) return 'normal';
-              if (count <= 10) return 'medium';
-              return 'compact';
-            };
-            
-            const size = getSize(itemsPerRow);
-            const useFixedWidth = rows.length > 1;
-            const blockWidthPercent = 100 / itemsPerRow;
-            
             const getUnitsToLabel = () => {
               if (denominator === 4) return numerator;
               if (denominator === 2) return numerator;
@@ -850,12 +826,67 @@ const MetronomeInterieur = () => {
             const unitsToLabel = getUnitsToLabel();
             const subsPerUnit = totalSubdivisions / unitsToLabel;
             
+            // Regrouper les pas par temps (même découpage que celui déjà utilisé
+            // pour les labels T1/T2/...), pour ne jamais couper un temps entre deux lignes
+            const unitGroups = [];
+            for (let i = 0; i < totalSubdivisions; i++) {
+              const u = Math.floor(i / subsPerUnit);
+              if (!unitGroups[u]) unitGroups[u] = [];
+              unitGroups[u].push(currentSubdivisions[i]);
+            }
+            
+            // Taille minimale d'un pas pour rester lisible sur petit écran (px)
+            const MIN_STEP_WIDTH = 56;
+            const GRID_GAP = 8; // correspond à gap-2 (0.5rem)
+            
+            const maxByWidth = gridWidth > 0
+              ? Math.max(1, Math.floor((gridWidth + GRID_GAP) / (MIN_STEP_WIDTH + GRID_GAP)))
+              : 12; // avant la première mesure (premier rendu), on garde l'ancien plafond
+            
+            // Combien de temps entiers tiennent par ligne (jamais un temps coupé en deux)
+            const unitSize = Math.max(1, Math.ceil(subsPerUnit));
+            const maxUnitsPerRow = Math.max(1, Math.floor(maxByWidth / unitSize));
+            const numberOfRows = Math.max(1, Math.ceil(unitGroups.length / maxUnitsPerRow));
+            
+            // Répartition symétrique des temps entre les lignes (ex: 4 temps / 2 lignes → 2+2, pas 3+1)
+            const baseUnitsPerRow = Math.floor(unitGroups.length / numberOfRows);
+            const rowsWithExtra = unitGroups.length % numberOfRows;
+            
+            const rows = [];
+            const rowStarts = [];
+            let unitCursor = 0;
+            let subCursor = 0;
+            for (let r = 0; r < numberOfRows; r++) {
+              const unitsThisRow = baseUnitsPerRow + (r < rowsWithExtra ? 1 : 0);
+              const rowSubs = [];
+              rowStarts.push(subCursor);
+              for (let u = 0; u < unitsThisRow; u++) {
+                const group = unitGroups[unitCursor] || [];
+                rowSubs.push(...group);
+                subCursor += group.length;
+                unitCursor++;
+              }
+              rows.push(rowSubs);
+            }
+            
+            const getSize = (count) => {
+              if (count <= 8) return 'normal';
+              if (count <= 10) return 'medium';
+              return 'compact';
+            };
+            
+            // Taille uniforme sur toutes les lignes, calée sur la plus longue
+            const maxRowLength = Math.max(...rows.map(r => r.length));
+            const size = getSize(maxRowLength);
+            const useFixedWidth = rows.length > 1;
+            const blockWidthPercent = 100 / maxRowLength;
+            
             return rows.map((rowSubs, rowIndex) => (
               <div key={rowIndex} className="mb-6">
                 {/* Labels T1, T2, etc. */}
                 <div className="flex mb-2 px-1">
                   {rowSubs.map((sub, idx) => {
-                    const globalIdx = rowIndex * itemsPerRow + idx;
+                    const globalIdx = rowStarts[rowIndex] + idx;
                     const unitNum = Math.floor(globalIdx / subsPerUnit) + 1;
                     const posInUnit = globalIdx % subsPerUnit;
                     
@@ -885,7 +916,7 @@ const MetronomeInterieur = () => {
                 {/* Grille de subdivisions */}
                 <div className="flex gap-2">
                   {rowSubs.map((sub, localIdx) => {
-                    const idx = rowIndex * itemsPerRow + localIdx;
+                    const idx = rowStarts[rowIndex] + localIdx;
                     const freq = FREQUENCIES[sub.frequency];
                     const sound = AVAILABLE_SOUNDS[sub.sound];
                     const isActive = isPlaying && currentSubdivision === idx;
@@ -988,10 +1019,8 @@ const MetronomeInterieur = () => {
                 
                 {rows.length > 1 && (
                   <div className="text-center text-slate-500 text-xs mt-1">
-                    Ligne {rowIndex + 1}/{rows.length} 
-                    {rowIndex === 0 && ` (${SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} 1-${Math.min(itemsPerRow, totalSubdivisions)})`}
-                    {rowIndex === 1 && ` (${SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} ${itemsPerRow + 1}-${Math.min(itemsPerRow * 2, totalSubdivisions)})`}
-                    {rowIndex === 2 && ` (${SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} ${itemsPerRow * 2 + 1}-${totalSubdivisions})`}
+                    Ligne {rowIndex + 1}/{rows.length}
+                    {` (${SUBDIVISION_OPTIONS[subdivision].label.toLowerCase()} ${rowStarts[rowIndex] + 1}-${rowStarts[rowIndex] + rowSubs.length})`}
                   </div>
                 )}
               </div>
@@ -1298,9 +1327,7 @@ root.render(<MetronomeInterieur />);
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {
-        // Installation possible sans SW (juste sans fonctionnement hors-ligne)
-      });
+      navigator.serviceWorker.register('sw.js').catch(() => {});
     });
   }
 </script>
