@@ -240,6 +240,14 @@ const MetronomeInterieur = () => {
     setCurrentSubdivisions(subdivisions);
   }, [subdivisions]);
   
+  // Filet de sécurité : le rendu qui suit immédiatement un changement de numérateur/
+  // dénominateur/subdivision voit déjà le nouveau totalSubdivisions, mais currentSubdivisions
+  // (mis à jour par l'effet ci-dessus) n'a pas encore la bonne longueur ce même rendu.
+  // Sans ce filet, la grille indexe au-delà du tableau et plante (écran noir).
+  const safeSubdivisions = currentSubdivisions.length === totalSubdivisions
+    ? currentSubdivisions
+    : subdivisions;
+  
   // ==========================================================================
   // INITIALISATION AUDIO
   // ==========================================================================
@@ -524,7 +532,7 @@ const MetronomeInterieur = () => {
       
       // Jouer le pattern normal
       if (shouldPlayNote(noteIndex, measureNum)) {
-        const soundType = currentSubdivisions[noteIndex].sound;
+        const soundType = (currentSubdivisions[noteIndex] || subdivisions[noteIndex])?.sound;
         
         // Calculer unités pour temps forts
         const getUnitsToLabel = () => {
@@ -832,7 +840,7 @@ const MetronomeInterieur = () => {
             for (let i = 0; i < totalSubdivisions; i++) {
               const u = Math.floor(i / subsPerUnit);
               if (!unitGroups[u]) unitGroups[u] = [];
-              unitGroups[u].push(currentSubdivisions[i]);
+              unitGroups[u].push(safeSubdivisions[i]);
             }
             
             // Taille minimale d'un pas pour rester lisible sur petit écran (px)
@@ -1029,7 +1037,7 @@ const MetronomeInterieur = () => {
         </div>
         
         {/* Sélecteur de son (Modal) */}
-        {soundSelectorOpen !== null && (
+        {soundSelectorOpen !== null && soundSelectorOpen < safeSubdivisions.length && (
           <div
             className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
             onClick={() => setSoundSelectorOpen(null)}
@@ -1042,7 +1050,7 @@ const MetronomeInterieur = () => {
                 Choisir le son
               </h3>
               <p className="text-slate-400 text-sm mb-4">
-                Note #{soundSelectorOpen + 1} - {currentSubdivisions[soundSelectorOpen].label}
+                Note #{soundSelectorOpen + 1} - {safeSubdivisions[soundSelectorOpen].label}
               </p>
               
               <div className="grid grid-cols-2 gap-3 mb-4">
@@ -1056,7 +1064,7 @@ const MetronomeInterieur = () => {
                       previewSound(key);
                     }}
                     className={`p-4 rounded-xl font-bold text-white transition-all active:scale-95 ${
-                      currentSubdivisions[soundSelectorOpen].sound === key 
+                      safeSubdivisions[soundSelectorOpen].sound === key 
                         ? 'ring-4 ring-yellow-400 scale-105' 
                         : 'hover:scale-105'
                     }`}
